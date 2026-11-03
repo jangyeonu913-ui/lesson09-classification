@@ -91,13 +91,13 @@ lr_model.fit(X_train_scaled, y_train)
 lr_train_acc = lr_model.score(X_train_scaled, y_train)
 lr_test_acc = lr_model.score(X_test_scaled, y_test)
 
-# 2) 의사결정트리 (질문을 세 번까지, 마지막 마디 5명 미만 분할 중지, 난수 고정)
+# 2) 의사결정트리
 dt_model = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=42)
 dt_model.fit(X_train, y_train)
 dt_train_acc = dt_model.score(X_train, y_train)
 dt_test_acc = dt_model.score(X_test, y_test)
 
-# 3) Baseline (입력을 하나도 보지 않고 훈련용에서 많은 쪽으로만 답하는 모델)
+# 3) Baseline (훈련용에서 많은 쪽으로만 답하는 모델)
 majority_class = y_train.mode()[0]
 train_baseline_acc = (y_train == majority_class).mean()
 test_baseline_acc = (y_test == majority_class).mean()
@@ -203,3 +203,82 @@ fig.add_trace(
         x=np.linspace(x_min, x_max, 100),
         y=np.linspace(y_min, y_max, 100),
         colorscale=[[0, 'rgba(173, 216, 230, 0.15)'], [1, 'rgba(255, 182, 193, 0.15)']],
+        showscale=False,
+        hoverinfo='skip'
+    )
+)
+
+# 로지스틱 회귀 0.5 확률 결정 경계선
+grid_scaled = scaler.transform(grid_df[selected_features])
+Z_lr_proba = lr_model.predict_proba(grid_scaled)[:, 1]
+Z_lr_proba = Z_lr_proba.reshape(xx.shape)
+
+fig.add_trace(
+    go.Contour(
+        z=Z_lr_proba,
+        x=np.linspace(x_min, x_max, 100),
+        y=np.linspace(y_min, y_max, 100),
+        contours=dict(start=0.5, end=0.5, size=0, coloring='lines'),
+        line=dict(color='black', width=2.5, dash='dash'),
+        showscale=False,
+        name='로지스틱 회귀(p=0.5)'
+    )
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# 선이 그림 밖인지 확인 안내
+if (Z_lr_proba.min() > 0.5) or (Z_lr_proba.max() < 0.5):
+    st.warning("💡 로지스틱 회귀의 0.5 결정 경계선이 현재 그림 범위 밖에 있습니다.")
+
+st.markdown("---")
+
+# 9. 의사결정트리 구조 나무 그림 및 분석 요약
+st.subheader("🌳 의사결정트리 구조 및 질문 분석")
+st.caption("의사결정트리 모델이 질문을 던져 가지를 뻗어 나가는 구조입니다.")
+
+dot_data = export_graphviz(
+    dt_model,
+    out_file=None,
+    feature_names=[feature_map[f] for f in selected_features],
+    class_names=['아님', '뇌졸중'],
+    filled=True,
+    rounded=True,
+    special_characters=True
+)
+st.graphviz_chart(dot_data)
+
+# 트리 구조 분석 함수
+def analyze_tree(tree_model, feature_names):
+    tree_ = tree_model.tree_
+    feature_name = [
+        feature_names[i] if i != _tree.TREE_UNDEFINED else "undefined"
+        for i in tree_.feature
+    ]
+    
+    leaf_nodes_count = 0
+    leaf_predict_no_stroke = 0
+    asked_features = set()
+    
+    def recurse(node):
+        nonlocal leaf_nodes_count, leaf_predict_no_stroke
+        if tree_.children_left[node] == _tree.TREE_UNDEFINED:
+            leaf_nodes_count += 1
+            values = tree_.value[node][0]
+            if values[0] >= values[1]:
+                leaf_predict_no_stroke += 1
+        else:
+            asked_features.add(feature_name[node])
+            recurse(tree_.children_left[node])
+            recurse(tree_.children_right[node])
+            
+    recurse(0)
+    return leaf_nodes_count, leaf_predict_no_stroke, list(asked_features)
+
+korean_feature_names_list = [feature_map[f] for f in selected_features]
+total_leaves, leaves_no_stroke, asked_feats = analyze_tree(dt_model, korean_feature_names_list)
+
+st.markdown("##### 💡 의사결정트리 분석 요약")
+st.markdown(f"- **답을 내는 마디(리프 노드)의 총 개수**: {total_leaves}개")
+st.markdown(f"- **그중 '아님'이라고 답하는 마디의 개수**: {leaves_no_stroke}개")
+st.markdown(f"- **고른 속성 가운데 이 나무가 실제로 질문에 사용한 속성**: {', '.join(asked_feats) if asked_feats else '없음'}")
